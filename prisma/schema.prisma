@@ -1,209 +1,221 @@
-// This is your Prisma schema file,
-// TikTok-like Social Media Application Schema
+// ============================================
+// TikStream - TikTok-like Live Streaming & Social Media App
+// Database: Vercel Postgres (PostgreSQL)
+// ============================================
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
-// User model - stores user profiles and authentication info
+// ==================== NextAuth Required Models ====================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ==================== App Models ====================
+
 model User {
   id            String    @id @default(cuid())
-  email         String    @unique
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
   username      String    @unique
-  displayName   String?
-  bio           String?
+  bio           String?   @db.Text
   avatarUrl     String?
-  bannerUrl     String?
-  passwordHash  String?   // For email/password auth
-  googleId      String?   // For Google Sign-In
+  coverUrl      String?
   isVerified    Boolean   @default(false)
-  isPrivate     Boolean   @default(false)
-  
-  // Stats
-  videosCount   Int       @default(0)
-  likesCount    Int       @default(0)
-  followersCount Int      @default(0)
-  followingCount Int      @default(0)
-  
-  // Timestamps
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastActiveAt  DateTime  @default(now())
-  
-  // Relations
-  videos        Video[]
-  likes         Like[]
-  comments      Comment[]
-  followers     Follow[]  @relation("UserFollowers")
-  following     Follow[]  @relation("UserFollowing")
-  notifications Notification[]
-  videoViews    VideoView[]
-  
-  @@index([email])
-  @@index([username])
-  @@index([createdAt])
+
+  accounts          Account[]
+  sessions          Session[]
+  videos            Video[]
+  comments          Comment[]
+  likes             Like[]
+  sentFollows       Follow[]          @relation("UserFollows")
+  receivedFollows   Follow[]          @relation("UserIsFollowed")
+  notifications     Notification[]
+  actorNotifications Notification[]    @relation("NotificationActor")
+  videoViews        VideoView[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
 }
 
-// Video model - stores video metadata
 model Video {
-  id            String    @id @default(cuid())
-  authorId      String
-  
-  // Video content
-  videoUrl      String
-  thumbnailUrl  String?
-  caption       String?
-  hashtags      String    // JSON array of hashtags
-  
-  // Stats
-  viewsCount    Int       @default(0)
-  likesCount    Int       @default(0)
-  commentsCount Int       @default(0)
-  sharesCount   Int       @default(0)
-  
-  // Video metadata
-  duration      Int?      // Duration in seconds
-  width         Int?
-  height        Int?
-  fileSize      Int?      // File size in bytes
-  
-  // Status
-  status        VideoStatus @default(PROCESSING)
-  isFeatured    Boolean   @default(false)
-  isReported    Boolean   @default(false)
-  
-  // Recommendation score
-  trendingScore Float     @default(0)
-  
-  // Timestamps
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  publishedAt   DateTime?
-  
-  // Relations
-  author        User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  title        String
+  description  String?  @db.Text
+  videoUrl     String
+  thumbnailUrl String?
+  duration     Int      @default(0)
+  visibility   String   @default("public")
+
+  viewCount    Int      @default(0)
+  likeCount    Int      @default(0)
+  commentCount Int      @default(0)
+  shareCount   Int      @default(0)
+
+  width        Int?
+  height       Int?
+  musicInfo    String?  @db.Text
+
+  authorId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author        User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
   likes         Like[]
   comments      Comment[]
-  videoViews    VideoView[]
-  
+  views         VideoView[]
+  hashtags      Hashtag[]     @relation("VideoHashtags")
+  notifications Notification[]
+
   @@index([authorId])
   @@index([createdAt])
-  @@index([trendingScore])
-  @@index([status])
+  @@index([visibility])
+  @@map("videos")
 }
 
-// Like model - tracks video likes
 model Like {
   id        String   @id @default(cuid())
   userId    String
   videoId   String
   createdAt DateTime @default(now())
-  
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
   @@unique([userId, videoId])
   @@index([userId])
   @@index([videoId])
+  @@map("likes")
 }
 
-// Comment model - video comments
 model Comment {
   id        String   @id @default(cuid())
-  videoId   String
+  content   String   @db.Text
   userId    String
-  parentId  String?  // For replies
-  content   String
-  likesCount Int     @default(0)
+  videoId   String
+  parentId  String?
+  likeCount Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
-  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id])
-  replies   Comment[] @relation("CommentReplies")
-  
-  @@index([videoId])
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video          Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  parent         Comment?       @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies        Comment[]      @relation("CommentReplies")
+  notifications  Notification[]
+
   @@index([userId])
-  @@index([createdAt])
+  @@index([videoId])
+  @@index([parentId])
+  @@map("comments")
 }
 
-// Follow model - user relationships
 model Follow {
-  followerId   String
-  followingId  String
-  createdAt    DateTime @default(now())
-  
-  follower     User     @relation("UserFollowers", fields: [followerId], references: [id], onDelete: Cascade)
-  following    User     @relation("UserFollowing", fields: [followingId], references: [id], onDelete: Cascade)
-  
-  @@id([followerId, followingId])
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserFollows", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserIsFollowed", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
   @@index([followerId])
   @@index([followingId])
+  @@map("follows")
 }
 
-// Notification model - user notifications
 model Notification {
-  id          String           @id @default(cuid())
-  userId      String
-  type        NotificationType
-  title       String
-  content     String?
-  data        String?          // JSON for additional data
-  isRead      Boolean          @default(false)
-  createdAt   DateTime         @default(now())
-  
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@index([userId])
+  id        String    @id @default(cuid())
+  type      String
+  userId    String
+  actorId   String
+  videoId   String?
+  commentId String?
+  message   String?   @db.Text
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actor   User     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  video   Video?   @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  comment Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
   @@index([createdAt])
+  @@map("notifications")
 }
 
-// VideoView model - tracks watch history for recommendations
 model VideoView {
-  id          String   @id @default(cuid())
-  userId      String
-  videoId     String
-  watchTime   Int      @default(0)  // Watch time in seconds
-  percentage  Float    @default(0)  // Percentage of video watched
-  createdAt   DateTime @default(now())
-  
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  
-  @@unique([userId, videoId])
+  id        String   @id @default(cuid())
+  userId    String?
+  videoId   String
+  watchTime Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([videoId])
+  @@map("video_views")
 }
 
-// Hashtag model for trending tags
 model Hashtag {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  videosCount Int      @default(0)
-  createdAt   DateTime @default(now())
-  
-  @@index([name])
-  @@index([videosCount])
-}
+  id        String   @id @default(cuid())
+  name      String   @unique
+  useCount  Int      @default(0)
+  createdAt DateTime @default(now())
 
-// Enums
-enum VideoStatus {
-  PROCESSING
-  PUBLISHED
-  ARCHIVED
-  DELETED
-}
+  videos Video[] @relation("VideoHashtags")
 
-enum NotificationType {
-  LIKE
-  COMMENT
-  FOLLOW
-  MENTION
-  SYSTEM
+  @@map("hashtags")
 }
